@@ -31,9 +31,9 @@ func main() {
 		fmt.Printf("UPTIME: %s\n", cpuOverall.UpTime.String())
 		fmt.Printf("CPU USAGE: %.2f%%\n\n", cpuOverall.Usage)
 
-        fmt.Println("CORES")
-		for key, core := range cpuOverall.Cores {
-			fmt.Printf("%s USAGE: %.2f%%\n", key, core.Usage)
+		fmt.Println("CORES")
+		for coreNum, core := range cpuOverall.Cores {
+			fmt.Printf("CORE(%d) USAGE: %.2f%%\n", coreNum, core.Usage)
 		}
 
 		fmt.Printf("\n")

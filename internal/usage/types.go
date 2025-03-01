@@ -13,7 +13,7 @@ type cpuCoreOverallStat struct {
 type CPU struct {
 	Usage  float32
 	UpTime time.Duration
-	Cores  map[string]Core
+	Cores  []Core
 }
 
 type cpuStat struct {

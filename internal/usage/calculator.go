@@ -16,7 +16,7 @@ import (
  */
 var processLastStates map[string]processCpuStat = make(map[string]processCpuStat)
 
-var overallCpuLastStats map[string]cpuCoreOverallStat = make(map[string]cpuCoreOverallStat)
+var overallCpuLastStats []cpuCoreOverallStat
 
 /*
 ** read processes usage from /proc/pid directories
@@ -100,7 +100,7 @@ func cpuOverallUsage(res chan CPU) {
 
 	coreLines := regex.FindAllString(string(cpuStatContent), -1)
 
-	currentCoreStatuses := make(map[string]cpuCoreOverallStat)
+	var currentCoreStatuses []cpuCoreOverallStat
 
 	for _, c := range coreLines {
 		spiltedData := strings.Split(c, " ")
@@ -113,9 +113,9 @@ func cpuOverallUsage(res chan CPU) {
 			}
 		}
 
-		currentCoreStatuses[spiltedData[0]] = cpuCoreOverallStat{
+		currentCoreStatuses = append(currentCoreStatuses, cpuCoreOverallStat{
 			stat: coreStats,
-		}
+		})
 	}
 
 	if err != nil {
@@ -132,18 +132,18 @@ func cpuOverallUsage(res chan CPU) {
 	res <- cpu
 }
 
-func calculateCpuCoresOverallUsage(coreStats map[string]cpuCoreOverallStat) CPU {
-	cpu := CPU{
-		Cores: make(map[string]Core),
-	}
+func calculateCpuCoresOverallUsage(coreStats []cpuCoreOverallStat) CPU {
+	cpu := CPU{}
 
 	var totalUsage float32
-	for key, currentStat := range coreStats {
-		lastStat, ok := overallCpuLastStats[key]
 
-		if !ok {
-			lastStat = currentStat
-		}
+	if len(coreStats) != len(overallCpuLastStats) {
+		overallCpuLastStats = make([]cpuCoreOverallStat, len(coreStats))
+		copy(overallCpuLastStats, coreStats)
+	}
+
+	for key, currentStat := range coreStats {
+		lastStat := overallCpuLastStats[key]
 
 		currentTotalTime := overallCpuTotalTime(currentStat.stat)
 		currentIdleTime := overallCpuIdleTime(currentStat.stat)
@@ -164,7 +164,7 @@ func calculateCpuCoresOverallUsage(coreStats map[string]cpuCoreOverallStat) CPU 
 			Usage: usage,
 		}
 
-		cpu.Cores[key] = core
+		cpu.Cores = append(cpu.Cores, core)
 		totalUsage += core.Usage
 
 		overallCpuLastStats[key] = currentStat
