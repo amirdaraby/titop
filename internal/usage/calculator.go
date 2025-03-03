@@ -68,11 +68,29 @@ func memOverallUsage(res chan Memory) {
 	allocated := total - available
 	usage := (float32(allocated) / float32(total)) * 100
 
+
+	var swap *Memory = nil
+
+	swapTotal := memInfoMap["SwapTotal"]
+	if swapTotal != 0 {
+		swapAvailable := memInfoMap["SwapFree"]
+		swapAllocated := swapTotal - swapAvailable
+		swapUsage := (float32(swapAllocated) / float32(swapTotal)) * 100
+
+		swap = &Memory{
+			Usage: swapUsage,
+			Total: swapTotal,
+			Available: swapAvailable,
+			Allocated: swapAllocated,
+		}
+	}
+
 	res <- Memory{
-		Usage:     float32(usage),
+		Usage:     usage,
 		Total:     total,
 		Available: available,
 		Allocated: allocated,
+		Swap: swap,
 	}
 }
 
