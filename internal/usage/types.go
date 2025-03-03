@@ -23,6 +23,7 @@ type cpuStat struct {
 type Memory struct {
 	Usage                       float32
 	Total, Available, Allocated int // KB
+	Swap *Memory
 }
 
 type Process struct {

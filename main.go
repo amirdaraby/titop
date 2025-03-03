@@ -38,7 +38,11 @@ func main() {
 
 		fmt.Printf("\n")
 
-		fmt.Printf("MEMORY USAGE: %d/%d MB (%.2f%%)\n ", memOverall.Allocated/1000, memOverall.Total/1000, memOverall.Usage)
+		fmt.Printf("MEMORY USAGE: %d/%d MB (%.2f%%)\n", memOverall.Allocated/1000, memOverall.Total/1000, memOverall.Usage)
+
+		if memOverall.Swap != nil {
+			fmt.Printf("SWAP USAGE: %d/%d MB (%.2f%%)\n", memOverall.Swap.Allocated/1000, memOverall.Swap.Total/1000, memOverall.Swap.Usage)
+		}
 
 		time.Sleep(time.Second)
 	}
