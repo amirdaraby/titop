@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/amirdaraby/titop/internal/titop"
+	titop "github.com/amirdaraby/titop/internal/application"
 )
 
 func main() {
