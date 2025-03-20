@@ -11,114 +11,194 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-const OVERALL_STATS_BAR_CHARACTER = "▌"
-const OVERALL_STATS_BAR_SPACE = " "
-const USAGE_MAX_LEN = 8
+const (
+	OVERALL_STATS_BAR_CHARACTER = "▌"
+	OVERALL_STATS_BAR_SPACE     = " "
+	USAGE_MAX_LEN               = 8
+	MIN_BAR_LENGTH              = 10
+	INTERNAL_PADDING            = 2
+	BOX_BORDER_WIDTH            = 2
+	GAP_BETWEEN_BOXES           = 0
+	CORES_PER_ROW               = 2
+)
 
 type UI struct {
 	screen tcell.Screen
+	styles uiStyles
+}
+
+type uiStyles struct {
+	bar    tcell.Style
+	border tcell.Style
+	text   tcell.Style
 }
 
 func Init(cancelCtx context.CancelFunc) (UI, error) {
-
 	s, err := tcell.NewScreen()
+	if err != nil {
+		return UI{}, err
+	}
+
+	if err := s.Init(); err != nil {
+		return UI{}, err
+	}
 
 	ui := UI{
 		screen: s,
-	}
-
-	if err != nil {
-		return ui, err
-	}
-
-	err = s.Init()
-
-	if err != nil {
-		return ui, err
+		styles: uiStyles{
+			bar:    tcell.StyleDefault.Foreground(tcell.NewRGBColor(250, 242, 161)).Background(tcell.NewRGBColor(69, 63, 120)),
+			border: tcell.StyleDefault.Foreground(tcell.ColorSlateGray.TrueColor()),
+			text:   tcell.StyleDefault.Foreground(tcell.ColorWhiteSmoke.TrueColor()).Background(tcell.ColorBlack),
+		},
 	}
 
 	ui.setTerminalStyle()
-
-	return ui, err
+	return ui, nil
 }
 
 func (ui *UI) setTerminalStyle() {
-	style := tcell.StyleDefault
-
-	ui.screen.SetStyle(style)
+	ui.screen.SetStyle(tcell.StyleDefault)
 }
 
 func (ui *UI) display(cpu usage.CPU, mem usage.Memory) {
 	ui.screen.Clear()
+	width, _ := ui.screen.Size()
 
-	barLen := getBarLen(ui.screen)
+	dimensions := ui.calculateDimensions(width)
 
-	startWidth := 2
-	startHeight := 2
+	lastPos := ui.renderCPUCores(cpu.Cores, dimensions)
 
-	barStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(250, 242, 161)).Background(tcell.NewRGBColor(69, 63, 120))
-	usageStyle := tcell.StyleDefault.Foreground(tcell.ColorWhiteSmoke.TrueColor()).Background(tcell.ColorBlack)
-
-	coreStartHeight := startHeight
-
-	for i := 0; i < len(cpu.Cores)-1; i += 2 {
-		coreStartWidth := startWidth
-
-		leftCoreTitle := fmt.Sprintf("%d:", i)
-		rightCoreTitle := fmt.Sprintf("%d:", i+1)
-		leftCoreUsage := fmt.Sprintf("(%.2f%%)", cpu.Cores[i].Usage)
-		rightCoreUsage := fmt.Sprintf("(%.2f%%)", cpu.Cores[i+1].Usage)
-
-		leftCoreBar := generateBar(ui.screen, cpu.Cores[i].Usage)
-		rightCoreBar := generateBar(ui.screen, cpu.Cores[i+1].Usage)
-
-		// left core
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, usageStyle, leftCoreTitle)
-		coreStartWidth += len(leftCoreTitle)
-
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, barStyle, leftCoreBar)
-		coreStartWidth += barLen
-
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, usageStyle, leftCoreUsage)
-		coreStartWidth += USAGE_MAX_LEN + 2
-
-		// right core
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, usageStyle, rightCoreTitle)
-		coreStartWidth += len(rightCoreTitle)
-
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, barStyle, rightCoreBar)
-		coreStartWidth += barLen
-
-		emitStr(ui.screen, coreStartWidth, coreStartHeight, usageStyle, rightCoreUsage)
-
-		coreStartHeight += 2
-	}
-
-	startHeight += coreStartHeight
-
-	memoryTitle := "MEM:"
-	memoryBar := generateBar(ui.screen, mem.Usage)
-	memoryUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Allocated)/float32(1000000), float32(mem.Total)/float32(1000000))
-
-	memoryBarWidth := startWidth + len(memoryTitle)
-	memoryUsageWidth := memoryBarWidth + barLen
-
-	emitStr(ui.screen, startWidth, startHeight, usageStyle, memoryTitle)
-	emitStr(ui.screen, memoryBarWidth, startHeight, barStyle, memoryBar)
-	emitStr(ui.screen, memoryUsageWidth, startHeight, usageStyle, memoryUsage)
-
-	startHeight += 2
-	if mem.Swap != nil {
-		swapTitle := "SWP:"
-		swapBar := generateBar(ui.screen, mem.Swap.Usage)
-		swapUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Swap.Allocated)/float32(1000000), float32(mem.Swap.Total)/float32(1000000))
-
-		emitStr(ui.screen, startWidth, startHeight, usageStyle, swapTitle)
-		emitStr(ui.screen, memoryBarWidth, startHeight, barStyle, swapBar)
-		emitStr(ui.screen, memoryUsageWidth, startHeight, usageStyle, swapUsage)
-	}
+	ui.renderMemorySection(mem, dimensions, lastPos)
 
 	ui.screen.Show()
+}
+
+type displayDimensions struct {
+	barLen, boxWidth, totalWidth, startWidth, maxUsageLen int
+}
+
+func (ui *UI) calculateDimensions(screenWidth int) displayDimensions {
+	maxUsageLen := len(fmt.Sprintf("(%.2f%%)", 100.00))
+
+	extraSpace := 4
+	fixedWidth := len("00:") + maxUsageLen
+	spaceForBars := screenWidth - (2 * (fixedWidth + extraSpace)) - 3
+	barLen := spaceForBars / 2
+	if barLen < MIN_BAR_LENGTH {
+		barLen = MIN_BAR_LENGTH
+	}
+
+	boxWidth := len("00:") + barLen + maxUsageLen + INTERNAL_PADDING
+	totalWidth := (boxWidth+BOX_BORDER_WIDTH)*2 + 1
+
+	startWidth := (screenWidth - totalWidth) / 2
+	if startWidth < 1 {
+		startWidth = 1
+	}
+	startWidth += 2
+
+	return displayDimensions{
+		barLen:      barLen,
+		boxWidth:    boxWidth,
+		totalWidth:  totalWidth,
+		startWidth:  startWidth,
+		maxUsageLen: maxUsageLen,
+	}
+}
+
+func (ui *UI) renderCPUCores(cores []usage.Core, dim displayDimensions) int {
+	startHeight := 2
+	coreStartHeight := startHeight
+	coreStartWidth := dim.startWidth
+	coreCount := 0
+
+	for idx, core := range cores {
+		if coreCount == 1 {
+			coreStartWidth = dim.startWidth + dim.boxWidth + 3
+		}
+
+		ui.renderCPUBox(
+			coreStartWidth,
+			coreStartHeight,
+			dim.boxWidth,
+			idx,
+			core.Usage,
+			dim.barLen,
+			dim.maxUsageLen,
+		)
+
+		coreCount++
+		if coreCount >= CORES_PER_ROW {
+			coreStartWidth = dim.startWidth
+			coreStartHeight += 3
+			coreCount = 0
+		}
+	}
+
+	return coreStartHeight + 1
+}
+
+func (ui *UI) renderCPUBox(x, y, boxWidth, coreIdx int, usage float32, barLen, maxUsageLen int) {
+	ui.drawBoxBorders(x, y, boxWidth)
+
+	currentX := x
+
+	coreTitle := fmt.Sprintf("%d:", coreIdx)
+	emitStr(ui.screen, currentX, y, ui.styles.text, coreTitle)
+	currentX += len(coreTitle)
+
+	bar := generateBarWithLen(barLen, usage)
+	emitStr(ui.screen, currentX, y, ui.styles.bar, bar)
+	currentX += barLen
+
+	usageText := fmt.Sprintf("(%.2f%%)", usage)
+	usageText = fmt.Sprintf("%*s", maxUsageLen, usageText)
+	emitStr(ui.screen, currentX, y, ui.styles.text, usageText)
+}
+
+func (ui *UI) renderMemorySection(mem usage.Memory, dim displayDimensions, startHeight int) {
+	memoryTitle := "MEM:"
+	memoryBar := generateBarWithLen(dim.barLen*2+3, mem.Usage)
+	memoryUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Allocated)/float32(1000000), float32(mem.Total)/float32(1000000))
+
+	memBoxWidth := len(memoryTitle) + (dim.barLen*2 + 3) + len(memoryUsage) + 2
+	memStartWidth := (dim.totalWidth - (memBoxWidth + 2)) / 2
+	if memStartWidth < 1 {
+		memStartWidth = 1
+	}
+	memStartWidth += dim.startWidth - 1
+
+	ui.drawBoxBorders(memStartWidth, startHeight, memBoxWidth)
+
+	currentX := memStartWidth
+	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryTitle)
+	currentX += len(memoryTitle)
+	emitStr(ui.screen, currentX, startHeight, ui.styles.bar, memoryBar)
+	currentX += dim.barLen*2 + 3
+	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryUsage)
+
+	if mem.Swap != nil {
+		startHeight += 2
+		swapTitle := "SWP:"
+		swapBar := generateBarWithLen(dim.barLen*2+3, mem.Swap.Usage)
+		swapUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Swap.Allocated)/float32(1000000), float32(mem.Swap.Total)/float32(1000000))
+
+		ui.drawBoxBorders(memStartWidth, startHeight, memBoxWidth)
+
+		currentX = memStartWidth
+		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapTitle)
+		currentX += len(swapTitle)
+		emitStr(ui.screen, currentX, startHeight, ui.styles.bar, swapBar)
+		currentX += dim.barLen*2 + 3
+		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapUsage)
+	}
+}
+
+func (ui *UI) drawBoxBorders(x, y, width int) {
+	emitStr(ui.screen, x-1, y-1, ui.styles.border, "+"+strings.Repeat("-", width)+"+")
+	emitStr(ui.screen, x-1, y+1, ui.styles.border, "+"+strings.Repeat("-", width)+"+")
+	emitStr(ui.screen, x-1, y, ui.styles.border, "|")
+	emitStr(ui.screen, x+width, y, ui.styles.border, "|")
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -152,13 +232,10 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 	}
 }
 
-func generateBar(s tcell.Screen, usage float32) (bar string) {
-	len := getBarLen(s)
-	filled := int((usage / 100) * float32(len))
-
-	return strings.Repeat(OVERALL_STATS_BAR_CHARACTER, filled) + strings.Repeat(OVERALL_STATS_BAR_SPACE, len-filled)
-}
-
-func getBarLen(s tcell.Screen) int {
-	return 20
+func generateBarWithLen(length int, usage float32) string {
+	filled := int((usage / 100) * float32(length))
+	if filled > length {
+		filled = length
+	}
+	return strings.Repeat(OVERALL_STATS_BAR_CHARACTER, filled) + strings.Repeat(OVERALL_STATS_BAR_SPACE, length-filled)
 }
