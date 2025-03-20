@@ -23,16 +23,7 @@ go build
 ./titop
 ```
 
-## How to Use It 🎮
-
-Just run:
-```bash
-./titop
-```
-
-### Quick Tips
 - Press `ESC` or `Ctrl+C` to bail out when you're done
-
 
 ## Tested On 🧪
 
