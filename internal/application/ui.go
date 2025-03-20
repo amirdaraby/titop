@@ -20,6 +20,10 @@ const (
 	BOX_BORDER_WIDTH            = 2
 	GAP_BETWEEN_BOXES           = 0
 	CORES_PER_ROW               = 2
+
+	// Usage thresholds
+	LOW_USAGE_THRESHOLD  = 40.0
+	HIGH_USAGE_THRESHOLD = 70.0
 )
 
 type UI struct {
@@ -28,9 +32,24 @@ type UI struct {
 }
 
 type uiStyles struct {
-	bar    tcell.Style
-	border tcell.Style
-	text   tcell.Style
+	border        tcell.Style
+	text          tcell.Style
+	barBackground tcell.Style
+}
+
+func getBarStyle(usage float32) tcell.Style {
+	// A deep navy blue background that's easy on the eyes
+	baseStyle := tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48))
+
+	// Softer, more modern colors for the bars
+	switch {
+	case usage < LOW_USAGE_THRESHOLD:
+		return baseStyle.Foreground(tcell.NewRGBColor(80, 250, 123)) // Soft mint green
+	case usage < HIGH_USAGE_THRESHOLD:
+		return baseStyle.Foreground(tcell.NewRGBColor(255, 184, 108)) // Warm orange
+	default:
+		return baseStyle.Foreground(tcell.NewRGBColor(255, 85, 85)) // Soft red
+	}
 }
 
 func Init(cancelCtx context.CancelFunc) (UI, error) {
@@ -46,9 +65,9 @@ func Init(cancelCtx context.CancelFunc) (UI, error) {
 	ui := UI{
 		screen: s,
 		styles: uiStyles{
-			bar:    tcell.StyleDefault.Foreground(tcell.NewRGBColor(250, 242, 161)).Background(tcell.NewRGBColor(69, 63, 120)),
-			border: tcell.StyleDefault.Foreground(tcell.ColorSlateGray.TrueColor()),
-			text:   tcell.StyleDefault.Foreground(tcell.ColorWhiteSmoke.TrueColor()).Background(tcell.ColorBlack),
+			border:        tcell.StyleDefault.Foreground(tcell.NewRGBColor(98, 114, 164)),  // Muted blue-gray
+			text:          tcell.StyleDefault.Foreground(tcell.NewRGBColor(248, 248, 242)), // Soft white
+			barBackground: tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48)),    // Deep navy blue
 		},
 	}
 
@@ -147,8 +166,13 @@ func (ui *UI) renderCPUBox(x, y, boxWidth, coreIdx int, usage float32, barLen, m
 	emitStr(ui.screen, currentX, y, ui.styles.text, coreTitle)
 	currentX += len(coreTitle)
 
+	// Draw background first
+	emptyBar := strings.Repeat(" ", barLen)
+	emitStr(ui.screen, currentX, y, ui.styles.barBackground, emptyBar)
+
+	// Draw the bar on top
 	bar := generateBarWithLen(barLen, usage)
-	emitStr(ui.screen, currentX, y, ui.styles.bar, bar)
+	emitStr(ui.screen, currentX, y, getBarStyle(usage), bar)
 	currentX += barLen
 
 	usageText := fmt.Sprintf("(%.2f%%)", usage)
@@ -173,7 +197,13 @@ func (ui *UI) renderMemorySection(mem usage.Memory, dim displayDimensions, start
 	currentX := memStartWidth
 	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryTitle)
 	currentX += len(memoryTitle)
-	emitStr(ui.screen, currentX, startHeight, ui.styles.bar, memoryBar)
+
+	// Draw background first
+	emptyBar := strings.Repeat(" ", dim.barLen*2+3)
+	emitStr(ui.screen, currentX, startHeight, ui.styles.barBackground, emptyBar)
+
+	// Draw the bar on top
+	emitStr(ui.screen, currentX, startHeight, getBarStyle(mem.Usage), memoryBar)
 	currentX += dim.barLen*2 + 3
 	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryUsage)
 
@@ -188,7 +218,12 @@ func (ui *UI) renderMemorySection(mem usage.Memory, dim displayDimensions, start
 		currentX = memStartWidth
 		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapTitle)
 		currentX += len(swapTitle)
-		emitStr(ui.screen, currentX, startHeight, ui.styles.bar, swapBar)
+
+		// Draw background first
+		emitStr(ui.screen, currentX, startHeight, ui.styles.barBackground, emptyBar)
+
+		// Draw the bar on top
+		emitStr(ui.screen, currentX, startHeight, getBarStyle(mem.Swap.Usage), swapBar)
 		currentX += dim.barLen*2 + 3
 		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapUsage)
 	}
