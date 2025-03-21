@@ -2,8 +2,6 @@ package usage
 
 import (
 	"time"
-
-	"github.com/tklauser/go-sysconf"
 )
 
 type Core struct {
@@ -27,13 +25,13 @@ type cpuStat struct {
 type Memory struct {
 	Usage                       float32
 	Total, Available, Allocated int // KB
-	Swap *Memory
+	Swap                        *Memory
 }
 
 type Process struct {
 	ID       int
 	Command  string
-	State string
+	State    string
 	Priority string
 	CpuUsage float32
 	MemUsage float32
@@ -43,7 +41,6 @@ type processCpuStat struct {
 	uTime, sTime, startTime int
 }
 
-const CLK_TK = sysconf.SC_CLK_TCK
 const (
 	USER_OVERALL_STAT = iota
 	NICE_OVERALL_STAT
