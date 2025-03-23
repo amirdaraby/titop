@@ -21,13 +21,16 @@ const (
 	CORES_PER_ROW               = 2
 
 	// Usage thresholds
-	LOW_USAGE_THRESHOLD  = 40.0
+	LOW_USAGE_THRESHOLD  = 30.0
 	HIGH_USAGE_THRESHOLD = 70.0
 )
 
 type UI struct {
-	screen tcell.Screen
-	styles uiStyles
+	screen    tcell.Screen
+	styles    uiStyles
+	cpu       usage.CPU
+	mem       usage.Memory
+	processes []usage.Process
 }
 
 type uiStyles struct {
@@ -76,15 +79,22 @@ func (ui *UI) setTerminalStyle() {
 	ui.screen.SetStyle(tcell.StyleDefault)
 }
 
-func (ui *UI) display(cpu usage.CPU, mem usage.Memory) {
+func (ui *UI) update(cpu usage.CPU, mem usage.Memory, proccesses []usage.Process) {
+	ui.cpu = cpu
+	ui.mem = mem
+	ui.processes = proccesses
+	ui.draw()
+}
+
+func (ui *UI) draw() {
 	ui.screen.Clear()
 	width, _ := ui.screen.Size()
 
 	dimensions := ui.calculateDimensions(width)
 
-	lastPos := ui.renderCPUCores(cpu.Cores, dimensions)
+	lastPos := ui.renderCPUCores(dimensions)
 
-	ui.renderMemorySection(mem, dimensions, lastPos)
+	ui.renderMemorySection(dimensions, lastPos)
 
 	ui.screen.Show()
 }
@@ -114,13 +124,13 @@ func (ui *UI) calculateDimensions(screenWidth int) displayDimensions {
 	}
 }
 
-func (ui *UI) renderCPUCores(cores []usage.Core, dim displayDimensions) int {
+func (ui *UI) renderCPUCores(dim displayDimensions) int {
 	startHeight := 1
 	coreStartHeight := startHeight
 	coreStartWidth := dim.startWidth
 	coreCount := 0
 
-	for idx, core := range cores {
+	for idx, core := range ui.cpu.Cores {
 		if coreCount == 1 {
 			coreStartWidth = dim.startWidth + dim.boxWidth + GAP_BETWEEN_BOXES
 		}
@@ -152,40 +162,24 @@ func (ui *UI) renderCPUBox(x, y, boxWidth, coreIdx int, usage float32, barLen, m
 	coreTitle := fmt.Sprintf("CPU%d (%.1f%%)", coreIdx, usage)
 	emitStr(ui.screen, currentX, y-1, ui.styles.text, coreTitle)
 
-	// Draw background first
-	emptyBar := strings.Repeat(" ", barLen)
-	emitStr(ui.screen, currentX, y, ui.styles.barBackground, emptyBar)
-
-	// Draw the bar on top
-	bar := generateBarWithLen(barLen, usage)
-	emitStr(ui.screen, currentX, y, getBarStyle(usage), bar)
+	ui.renderColoredBar(currentX, y, usage, barLen)
 }
 
-func (ui *UI) renderMemorySection(mem usage.Memory, dim displayDimensions, startHeight int) {
-	memoryTitle := fmt.Sprintf("MEM (%.1f/%.1fG)", float32(mem.Allocated)/float32(1000000), float32(mem.Total)/float32(1000000))
-	// Use same bar length as CPU cores for consistency
-	barLen := dim.barLen
-	memoryBar := generateBarWithLen(barLen, mem.Usage)
-
-	// Start from same position as CPU cores
+func (ui *UI) renderMemorySection(dim displayDimensions, startHeight int) {
+	memoryTitle := fmt.Sprintf("MEM (%.1f/%.1fG)", float32(ui.mem.Allocated)/float32(1000000), float32(ui.mem.Total)/float32(1000000))
 	currentX := dim.startWidth
 
 	// Draw memory title and bar
 	emitStr(ui.screen, currentX, startHeight-1, ui.styles.text, memoryTitle)
-	emptyBar := strings.Repeat(" ", barLen)
-	emitStr(ui.screen, currentX, startHeight, ui.styles.barBackground, emptyBar)
-	emitStr(ui.screen, currentX, startHeight, getBarStyle(mem.Usage), memoryBar)
+	ui.renderColoredBar(currentX, startHeight, ui.mem.Usage, dim.barLen)
 
-	if mem.Swap != nil {
-		// Position swap next to memory with same gap as CPU cores
+	if ui.mem.Swap != nil {
 		swapX := dim.startWidth + dim.boxWidth + GAP_BETWEEN_BOXES
-		swapTitle := fmt.Sprintf("SWP (%.1f/%.1fG)", float32(mem.Swap.Allocated)/float32(1000000), float32(mem.Swap.Total)/float32(1000000))
-		swapBar := generateBarWithLen(barLen, mem.Swap.Usage)
+		swapTitle := fmt.Sprintf("SWP (%.1f/%.1fG)", float32(ui.mem.Swap.Allocated)/float32(1000000), float32(ui.mem.Swap.Total)/float32(1000000))
 
 		// Draw swap title and bar
 		emitStr(ui.screen, swapX, startHeight-1, ui.styles.text, swapTitle)
-		emitStr(ui.screen, swapX, startHeight, ui.styles.barBackground, emptyBar)
-		emitStr(ui.screen, swapX, startHeight, getBarStyle(mem.Swap.Usage), swapBar)
+		ui.renderColoredBar(swapX, startHeight, ui.mem.Swap.Usage, dim.barLen)
 	}
 }
 
@@ -210,6 +204,7 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
 			ui.screen.Sync()
+			ui.draw()
 		case *tcell.EventKey:
 			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
 				cancelCtx()
@@ -220,21 +215,34 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 	}
 }
 
-func generateBarWithLen(length int, usage float32) string {
-	filled := min(int((usage/100)*float32(length)), length)
-	return strings.Repeat(OVERALL_STATS_BAR_CHARACTER, filled) + strings.Repeat(OVERALL_STATS_BAR_SPACE, length-filled)
-}
+func (ui *UI) renderColoredBar(x, y int, usage float32, barLen int) {
+	filled := min(int((usage/100)*float32(barLen)), barLen)
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
+	lowPos := int((LOW_USAGE_THRESHOLD / 100) * float32(barLen))
+	highPos := int((HIGH_USAGE_THRESHOLD / 100) * float32(barLen))
 
-func max(a, b int) int {
-	if a > b {
-		return a
+	emptyBar := strings.Repeat(" ", barLen)
+	emitStr(ui.screen, x, y, ui.styles.barBackground, emptyBar)
+
+	greenLen := min(filled, lowPos)
+	if greenLen > 0 {
+		greenBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, greenLen)
+		emitStr(ui.screen, x, y, getBarStyle(LOW_USAGE_THRESHOLD-1), greenBar)
 	}
-	return b
+
+	if filled > lowPos {
+		yellowLen := min(filled-lowPos, highPos-lowPos)
+		if yellowLen > 0 {
+			yellowBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, yellowLen)
+			emitStr(ui.screen, x+lowPos, y, getBarStyle((LOW_USAGE_THRESHOLD+HIGH_USAGE_THRESHOLD)/2), yellowBar)
+		}
+	}
+
+	if filled > highPos {
+		redLen := filled - highPos
+		if redLen > 0 {
+			redBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, redLen)
+			emitStr(ui.screen, x+highPos, y, getBarStyle(HIGH_USAGE_THRESHOLD+1), redBar)
+		}
+	}
 }

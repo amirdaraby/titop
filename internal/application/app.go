@@ -38,7 +38,9 @@ func Run(parentCtx context.Context) error {
 	for {
 		cpu := <-cpuRes
 		mem := <-memRes
+		proc := <-processesRes
+		
 
-		ui.display(cpu, mem)
+		ui.update(cpu, mem, proc)
 	}
 }
