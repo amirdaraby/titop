@@ -26,16 +26,19 @@ const (
 )
 
 type UI struct {
-	screen    tcell.Screen
-	styles    uiStyles
-	cpu       usage.CPU
-	mem       usage.Memory
-	processes []usage.Process
+	screen          tcell.Screen
+	styles          uiStyles
+	cpu             usage.CPU
+	mem             usage.Memory
+	processes       []usage.Process
+	selectedProcess int // Current selected process index
+	scrollOffset    int // How many processes to skip from top
 }
 
 type uiStyles struct {
 	text          tcell.Style
 	barBackground tcell.Style
+	selectedText  tcell.Style
 }
 
 func getBarStyle(usage float32) tcell.Style {
@@ -66,8 +69,9 @@ func Init(cancelCtx context.CancelFunc) (UI, error) {
 	ui := UI{
 		screen: s,
 		styles: uiStyles{
-			text:          tcell.StyleDefault.Foreground(tcell.NewRGBColor(248, 248, 242)), // Soft white
-			barBackground: tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48)),    // Deep navy blue
+			text:          tcell.StyleDefault.Foreground(tcell.NewRGBColor(248, 248, 242)),                                           // Soft white
+			barBackground: tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48)),                                              // Deep navy blue
+			selectedText:  tcell.StyleDefault.Background(tcell.NewRGBColor(68, 71, 90)).Foreground(tcell.NewRGBColor(248, 248, 242)), // Highlighted row
 		},
 	}
 
@@ -88,13 +92,17 @@ func (ui *UI) update(cpu usage.CPU, mem usage.Memory, proccesses []usage.Process
 
 func (ui *UI) draw() {
 	ui.screen.Clear()
-	width, _ := ui.screen.Size()
+	width, height := ui.screen.Size()
 
 	dimensions := ui.calculateDimensions(width)
 
 	lastPos := ui.renderCPUCores(dimensions)
+	lastPos = ui.renderMemorySection(dimensions, lastPos)
 
-	ui.renderMemorySection(dimensions, lastPos)
+	// Add a gap before process list
+	lastPos += 1
+
+	ui.renderProcessList(dimensions, lastPos, height-lastPos)
 
 	ui.screen.Show()
 }
@@ -165,7 +173,7 @@ func (ui *UI) renderCPUBox(x, y, boxWidth, coreIdx int, usage float32, barLen, m
 	ui.renderColoredBar(currentX, y, usage, barLen)
 }
 
-func (ui *UI) renderMemorySection(dim displayDimensions, startHeight int) {
+func (ui *UI) renderMemorySection(dim displayDimensions, startHeight int) int {
 	memoryTitle := fmt.Sprintf("MEM (%.1f/%.1fG)", float32(ui.mem.Allocated)/float32(1000000), float32(ui.mem.Total)/float32(1000000))
 	currentX := dim.startWidth
 
@@ -181,6 +189,67 @@ func (ui *UI) renderMemorySection(dim displayDimensions, startHeight int) {
 		emitStr(ui.screen, swapX, startHeight-1, ui.styles.text, swapTitle)
 		ui.renderColoredBar(swapX, startHeight, ui.mem.Swap.Usage, dim.barLen)
 	}
+
+	return startHeight + 1
+}
+
+func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
+	if len(ui.processes) == 0 {
+		return
+	}
+
+	// Calculate command column width based on available space
+	otherColumnsWidth := 8 + 8 + 8 + 6 + 6                 // PID + STATE + PRIO + CPU% + MEM%
+	commandWidth := dim.totalWidth - otherColumnsWidth - 5 // -5 for spacing between columns
+
+	// Header
+	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %-6s %-6s",
+		"PID", commandWidth, "COMMAND", "STATE", "PRIO", "CPU%", "MEM%")
+	emitStr(ui.screen, dim.startWidth, startY, ui.styles.text, header)
+	startY++
+
+	// Calculate visible range
+	visibleCount := maxHeight - 1 // -1 for header
+	if visibleCount < 0 {
+		visibleCount = 0
+	}
+	visibleCount = min(len(ui.processes), visibleCount)
+
+	endIdx := ui.scrollOffset + visibleCount
+	if endIdx > len(ui.processes) {
+		endIdx = len(ui.processes)
+	}
+
+	// Render visible processes
+	for i := ui.scrollOffset; i < endIdx; i++ {
+		proc := ui.processes[i]
+		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %5.1f%% %5.1f%%",
+			proc.ID,
+			commandWidth, truncateString(proc.Command, commandWidth),
+			proc.State,
+			proc.Priority,
+			proc.CpuUsage,
+			proc.MemUsage,
+		)
+
+		style := ui.styles.text
+		if i == ui.selectedProcess {
+			style = ui.styles.selectedText
+		}
+
+		emitStr(ui.screen, dim.startWidth, startY+(i-ui.scrollOffset), style, processLine)
+	}
+}
+
+// Helper function to truncate strings that are too long
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		// If string is shorter than maxLen, right-pad with spaces
+		return fmt.Sprintf("%-*s", maxLen, s)
+	}
+
+	// If longer than maxLen, truncate and add ellipsis
+	return fmt.Sprintf("%-*s", maxLen, s[:maxLen-3]+"...")
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -206,13 +275,81 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 			ui.screen.Sync()
 			ui.draw()
 		case *tcell.EventKey:
-			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
+			switch ev.Key() {
+			case tcell.KeyEscape, tcell.KeyCtrlC:
 				cancelCtx()
 				ui.screen.Fini()
 				os.Exit(0)
+			case tcell.KeyUp:
+				ui.moveSelection(-1)
+				ui.draw()
+			case tcell.KeyDown:
+				ui.moveSelection(1)
+				ui.draw()
 			}
 		}
 	}
+}
+
+func (ui *UI) moveSelection(delta int) {
+	if len(ui.processes) == 0 {
+		return
+	}
+
+	// Calculate visible area
+	_, height := ui.screen.Size()
+	// CPU section height: number of CPU core pairs * 2 (each pair takes 2 rows)
+	cpuHeight := ((len(ui.cpu.Cores) + 1) / 2) * 2
+	// Total header height: CPU section + 1 for memory + 1 for gap + 1 for process header
+	headerHeight := cpuHeight + 3
+	visibleHeight := height - headerHeight
+	if visibleHeight < 0 {
+		visibleHeight = 0
+	}
+
+	// Calculate new selection
+	newSelection := ui.selectedProcess + delta
+
+	// Bounds checking for selection
+	if newSelection < 0 {
+		newSelection = 0
+	} else if newSelection >= len(ui.processes) {
+		newSelection = len(ui.processes) - 1
+	}
+
+	// Update selection
+	ui.selectedProcess = newSelection
+
+	// Calculate scroll boundaries
+	maxScroll := max(0, len(ui.processes)-visibleHeight)
+
+	// Start scrolling when 3 processes remain from bottom
+	const scrollBuffer = 3
+
+	// If moving down and selection is getting close to bottom of visible area
+	if delta > 0 && ui.selectedProcess >= ui.scrollOffset+visibleHeight-scrollBuffer {
+		ui.scrollOffset = min(ui.selectedProcess-visibleHeight+scrollBuffer, maxScroll)
+	}
+
+	// If moving up and selection is at the top of visible area
+	if delta < 0 && ui.selectedProcess <= ui.scrollOffset {
+		ui.scrollOffset = ui.selectedProcess
+	}
+
+	// Ensure scroll offset stays within bounds
+	if ui.scrollOffset < 0 {
+		ui.scrollOffset = 0
+	}
+	if ui.scrollOffset > maxScroll {
+		ui.scrollOffset = maxScroll
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (ui *UI) renderColoredBar(x, y int, usage float32, barLen int) {
