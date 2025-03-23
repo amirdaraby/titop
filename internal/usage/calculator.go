@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amirdaraby/titop/internal/config"
 	"github.com/amirdaraby/titop/internal/reader"
+	"github.com/amirdaraby/titop/internal/system"
 )
 
 /*
@@ -22,15 +24,75 @@ var overallCpuLastStats []cpuCoreOverallStat
 ** read processes usage from /proc/pid directories
  */
 func Processes(res chan []Process) {
+	processesContent := reader.ReadProcesses()
 
+	var processes []Process
+
+	systemUptime, err := system.GetUptime()
+
+	if err != nil {
+		panic(err)
+	}
+
+	for _, p := range processesContent {
+		stats := strings.Split(string(p), " ")
+
+		cmd := stats[COMM_PROCESS]
+		priority := stats[PRIORITY_PROCESS]
+		state := stats[STATE_PROCESS]
+		pid := stats[ID_PROCESS]
+
+		utime, err := strconv.Atoi(stats[UTIME_PROCESS])
+		if err != nil {
+			panic(err)
+		}
+
+		stime, err := strconv.Atoi(stats[STIME_PROCESS])
+		if err != nil {
+			panic(err)
+		}
+
+		startTime, err := strconv.Atoi(stats[START_TIME_PROCESS])
+
+		if err != nil {
+			panic(err)
+		}
+
+		currentStat := processCpuStat{
+			uTime:        int64(utime),
+			sTime:        int64(stime),
+			startTime:    int64(startTime),
+			systemUptime: systemUptime,
+		}
+
+		lastStat, exists := processLastStates[pid]
+
+		if !exists {
+			lastStat = currentStat
+		}
+		processLastStates[pid] = currentStat
+
+		proccessTimeDiff := (currentStat.processTime() - lastStat.processTime()) / config.Get().ClkTck
+		systemUptimeDiff := currentStat.systemUptime - lastStat.systemUptime
+
+		cpuUsage := (float32(proccessTimeDiff) / float32(systemUptimeDiff)) * 100
+
+		processes = append(processes, Process{
+			ID:       pid,
+			Command:  cmd,
+			State:    state,
+			Priority: priority,
+			CpuUsage: cpuUsage,
+		})
+	}
+
+	res <- processes
 }
 
-/*
-* reads overall usage from /proc/
- */
-func Overall(cpuRes chan CPU, memRes chan Memory) {
+func Calc(cpuRes chan CPU, memRes chan Memory, processesRes chan []Process) {
 	go cpuOverallUsage(cpuRes)
 	go memOverallUsage(memRes)
+	go Processes(processesRes)
 }
 
 func memOverallUsage(res chan Memory) {

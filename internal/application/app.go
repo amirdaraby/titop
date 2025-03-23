@@ -12,6 +12,7 @@ func Run(parentCtx context.Context) error {
 
 	cpuRes := make(chan usage.CPU, 1)
 	memRes := make(chan usage.Memory, 1)
+	processesRes := make(chan []usage.Process, 1)
 
 	ui, err := Init(cancel)
 
@@ -28,8 +29,8 @@ func Run(parentCtx context.Context) error {
 			case <-ctx.Done():
 				break loop
 			default:
-				usage.Overall(cpuRes, memRes)
-				time.Sleep(time.Second * 1)
+				usage.Calc(cpuRes, memRes, processesRes)
+				time.Sleep(time.Second * 2)
 			}
 		}
 	}()
