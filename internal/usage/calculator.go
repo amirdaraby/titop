@@ -77,6 +77,10 @@ func Processes(res chan []Process) {
 
 		cpuUsage := (float32(proccessTimeDiff) / float32(systemUptimeDiff)) * 100
 
+		if math.IsNaN(float64(cpuUsage)) {
+			cpuUsage = 0
+		}
+
 		processes = append(processes, Process{
 			ID:       pid,
 			Command:  cmd,
