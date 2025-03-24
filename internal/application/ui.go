@@ -83,10 +83,10 @@ func (ui *UI) setTerminalStyle() {
 	ui.screen.SetStyle(tcell.StyleDefault)
 }
 
-func (ui *UI) update(cpu usage.CPU, mem usage.Memory, proccesses []usage.Process) {
+func (ui *UI) update(cpu usage.CPU, mem usage.Memory, processes []usage.Process) {
 	ui.cpu = cpu
 	ui.mem = mem
-	ui.processes = proccesses
+	ui.processes = processes
 	ui.draw()
 }
 
@@ -203,7 +203,7 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 	commandWidth := dim.totalWidth - otherColumnsWidth - 5 // -5 for spacing between columns
 
 	// Header
-	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %-6s %-6s",
+	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
 		"PID", commandWidth, "COMMAND", "STATE", "PRIO", "CPU%", "MEM%")
 	emitStr(ui.screen, dim.startWidth, startY, ui.styles.text, header)
 	startY++
@@ -223,13 +223,18 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 	// Render visible processes
 	for i := ui.scrollOffset; i < endIdx; i++ {
 		proc := ui.processes[i]
-		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %5.1f%% %5.1f%%",
+
+		// Format CPU and MEM values
+		cpuStr := fmt.Sprintf("%5.1f%%", proc.CpuUsage)
+		memStr := fmt.Sprintf("%5.1f%%", proc.MemUsage)
+
+		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
 			proc.ID,
 			commandWidth, truncateString(proc.Command, commandWidth),
 			proc.State,
 			proc.Priority,
-			proc.CpuUsage,
-			proc.MemUsage,
+			cpuStr,
+			memStr,
 		)
 
 		style := ui.styles.text
@@ -343,13 +348,6 @@ func (ui *UI) moveSelection(delta int) {
 	if ui.scrollOffset > maxScroll {
 		ui.scrollOffset = maxScroll
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (ui *UI) renderColoredBar(x, y int, usage float32, barLen int) {

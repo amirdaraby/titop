@@ -27,20 +27,28 @@ func Processes(res chan []Process) {
 	processesContent := reader.ReadProcesses()
 
 	var processes []Process
+	seenPIDs := make(map[string]struct{})
 
 	systemUptime, err := system.GetUptime()
-
 	if err != nil {
 		panic(err)
 	}
 
+	numCores := config.Get().CoresCount
+
 	for _, p := range processesContent {
 		stats := strings.Split(string(p), " ")
+
+		pid := stats[ID_PROCESS]
+		if _, exists := seenPIDs[pid]; exists {
+			continue
+		}
+
+		seenPIDs[pid] = struct{}{}
 
 		cmd := stats[COMM_PROCESS]
 		priority := stats[PRIORITY_PROCESS]
 		state := stats[STATE_PROCESS]
-		pid := stats[ID_PROCESS]
 
 		utime, err := strconv.Atoi(stats[UTIME_PROCESS])
 		if err != nil {
@@ -53,7 +61,6 @@ func Processes(res chan []Process) {
 		}
 
 		startTime, err := strconv.Atoi(stats[START_TIME_PROCESS])
-
 		if err != nil {
 			panic(err)
 		}
@@ -66,20 +73,35 @@ func Processes(res chan []Process) {
 		}
 
 		lastStat, exists := processLastStates[pid]
-
 		if !exists {
 			lastStat = currentStat
+			processLastStates[pid] = currentStat
+			processes = append(processes, Process{
+				ID:       pid,
+				Command:  cmd,
+				State:    state,
+				Priority: priority,
+				CpuUsage: 0,
+			})
+			continue
 		}
-		processLastStates[pid] = currentStat
 
-		proccessTimeDiff := (currentStat.processTime() - lastStat.processTime()) / config.Get().ClkTck
-		systemUptimeDiff := currentStat.systemUptime - lastStat.systemUptime
+		processTimeDiff := float64(currentStat.processTime() - lastStat.processTime())
 
-		cpuUsage := (float32(proccessTimeDiff) / float32(systemUptimeDiff)) * 100
+		uptimeDiff := float64(systemUptime-lastStat.systemUptime) * float64(config.Get().ClkTck)
 
-		if math.IsNaN(float64(cpuUsage)) {
+		var cpuUsage float32
+		if uptimeDiff > 0 {
+			cpuUsage = float32((processTimeDiff / uptimeDiff) * 100.0 / float64(numCores))
+		}
+
+		if cpuUsage < 0 || math.IsNaN(float64(cpuUsage)) {
 			cpuUsage = 0
+		} else if cpuUsage > 100.0 {
+			cpuUsage = 100.0
 		}
+
+		processLastStates[pid] = currentStat
 
 		processes = append(processes, Process{
 			ID:       pid,
