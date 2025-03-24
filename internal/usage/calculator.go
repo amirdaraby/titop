@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amirdaraby/titop/internal/config"
 	"github.com/amirdaraby/titop/internal/reader"
+	"github.com/amirdaraby/titop/internal/system"
 )
 
 /*
@@ -22,15 +24,101 @@ var overallCpuLastStats []cpuCoreOverallStat
 ** read processes usage from /proc/pid directories
  */
 func Processes(res chan []Process) {
+	processesContent := reader.ReadProcesses()
 
+	var processes []Process
+	seenPIDs := make(map[string]struct{})
+
+	systemUptime, err := system.GetUptime()
+	if err != nil {
+		panic(err)
+	}
+
+	numCores := config.Get().CoresCount
+
+	for _, p := range processesContent {
+		stats := strings.Split(string(p), " ")
+
+		pid := stats[ID_PROCESS]
+		if _, exists := seenPIDs[pid]; exists {
+			continue
+		}
+
+		seenPIDs[pid] = struct{}{}
+
+		cmd := stats[COMM_PROCESS]
+		priority := stats[PRIORITY_PROCESS]
+		state := stats[STATE_PROCESS]
+
+		utime, err := strconv.Atoi(stats[UTIME_PROCESS])
+		if err != nil {
+			panic(err)
+		}
+
+		stime, err := strconv.Atoi(stats[STIME_PROCESS])
+		if err != nil {
+			panic(err)
+		}
+
+		startTime, err := strconv.Atoi(stats[START_TIME_PROCESS])
+		if err != nil {
+			panic(err)
+		}
+
+		currentStat := processCpuStat{
+			uTime:        int64(utime),
+			sTime:        int64(stime),
+			startTime:    int64(startTime),
+			systemUptime: systemUptime,
+		}
+
+		lastStat, exists := processLastStates[pid]
+		if !exists {
+			lastStat = currentStat
+			processLastStates[pid] = currentStat
+			processes = append(processes, Process{
+				ID:       pid,
+				Command:  cmd,
+				State:    state,
+				Priority: priority,
+				CpuUsage: 0,
+			})
+			continue
+		}
+
+		processTimeDiff := float64(currentStat.processTime() - lastStat.processTime())
+
+		uptimeDiff := float64(systemUptime-lastStat.systemUptime) * float64(config.Get().ClkTck)
+
+		var cpuUsage float32
+		if uptimeDiff > 0 {
+			cpuUsage = float32((processTimeDiff / uptimeDiff) * 100.0 / float64(numCores))
+		}
+
+		if cpuUsage < 0 || math.IsNaN(float64(cpuUsage)) {
+			cpuUsage = 0
+		} else if cpuUsage > 100.0 {
+			cpuUsage = 100.0
+		}
+
+		processLastStates[pid] = currentStat
+
+		processes = append(processes, Process{
+			ID:       pid,
+			Command:  cmd,
+			State:    state,
+			Priority: priority,
+			CpuUsage: cpuUsage,
+		})
+	}
+
+	res <- processes
 }
 
-/*
-* reads overall usage from /proc/
- */
-func Overall(cpuRes chan CPU, memRes chan Memory) {
+func Calc(cpuRes chan CPU, memRes chan Memory, processesRes chan []Process) {
 	go cpuOverallUsage(cpuRes)
 	go memOverallUsage(memRes)
+	go Processes(processesRes)
 }
 
 func memOverallUsage(res chan Memory) {

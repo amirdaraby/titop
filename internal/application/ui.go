@@ -16,25 +16,29 @@ const (
 	OVERALL_STATS_BAR_SPACE     = " "
 	USAGE_MAX_LEN               = 8
 	MIN_BAR_LENGTH              = 10
-	INTERNAL_PADDING            = 2
-	BOX_BORDER_WIDTH            = 2
-	GAP_BETWEEN_BOXES           = 0
+	INTERNAL_PADDING            = 1
+	GAP_BETWEEN_BOXES           = 1 // Reduced from 2 to 1
 	CORES_PER_ROW               = 2
 
 	// Usage thresholds
-	LOW_USAGE_THRESHOLD  = 40.0
+	LOW_USAGE_THRESHOLD  = 30.0
 	HIGH_USAGE_THRESHOLD = 70.0
 )
 
 type UI struct {
-	screen tcell.Screen
-	styles uiStyles
+	screen          tcell.Screen
+	styles          uiStyles
+	cpu             usage.CPU
+	mem             usage.Memory
+	processes       []usage.Process
+	selectedProcess int // Current selected process index
+	scrollOffset    int // How many processes to skip from top
 }
 
 type uiStyles struct {
-	border        tcell.Style
 	text          tcell.Style
 	barBackground tcell.Style
+	selectedText  tcell.Style
 }
 
 func getBarStyle(usage float32) tcell.Style {
@@ -65,9 +69,9 @@ func Init(cancelCtx context.CancelFunc) (UI, error) {
 	ui := UI{
 		screen: s,
 		styles: uiStyles{
-			border:        tcell.StyleDefault.Foreground(tcell.NewRGBColor(98, 114, 164)),  // Muted blue-gray
-			text:          tcell.StyleDefault.Foreground(tcell.NewRGBColor(248, 248, 242)), // Soft white
-			barBackground: tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48)),    // Deep navy blue
+			text:          tcell.StyleDefault.Foreground(tcell.NewRGBColor(248, 248, 242)),                                           // Soft white
+			barBackground: tcell.StyleDefault.Background(tcell.NewRGBColor(28, 33, 48)),                                              // Deep navy blue
+			selectedText:  tcell.StyleDefault.Background(tcell.NewRGBColor(68, 71, 90)).Foreground(tcell.NewRGBColor(248, 248, 242)), // Highlighted row
 		},
 	}
 
@@ -79,15 +83,26 @@ func (ui *UI) setTerminalStyle() {
 	ui.screen.SetStyle(tcell.StyleDefault)
 }
 
-func (ui *UI) display(cpu usage.CPU, mem usage.Memory) {
+func (ui *UI) update(cpu usage.CPU, mem usage.Memory, processes []usage.Process) {
+	ui.cpu = cpu
+	ui.mem = mem
+	ui.processes = processes
+	ui.draw()
+}
+
+func (ui *UI) draw() {
 	ui.screen.Clear()
-	width, _ := ui.screen.Size()
+	width, height := ui.screen.Size()
 
 	dimensions := ui.calculateDimensions(width)
 
-	lastPos := ui.renderCPUCores(cpu.Cores, dimensions)
+	lastPos := ui.renderCPUCores(dimensions)
+	lastPos = ui.renderMemorySection(dimensions, lastPos)
 
-	ui.renderMemorySection(mem, dimensions, lastPos)
+	// Add a gap before process list
+	lastPos += 1
+
+	ui.renderProcessList(dimensions, lastPos, height-lastPos)
 
 	ui.screen.Show()
 }
@@ -99,41 +114,33 @@ type displayDimensions struct {
 func (ui *UI) calculateDimensions(screenWidth int) displayDimensions {
 	maxUsageLen := len(fmt.Sprintf("(%.2f%%)", 100.00))
 
-	extraSpace := 4
-	fixedWidth := len("00:") + maxUsageLen
-	spaceForBars := screenWidth - (2 * (fixedWidth + extraSpace)) - 3
-	barLen := spaceForBars / 2
+	// Use full screen width minus minimal spacing
+	barLen := (screenWidth - 4 - GAP_BETWEEN_BOXES) / 2 // 4 for minimal total side margins
 	if barLen < MIN_BAR_LENGTH {
 		barLen = MIN_BAR_LENGTH
 	}
 
-	boxWidth := len("00:") + barLen + maxUsageLen + INTERNAL_PADDING
-	totalWidth := (boxWidth+BOX_BORDER_WIDTH)*2 + 1
-
-	startWidth := (screenWidth - totalWidth) / 2
-	if startWidth < 1 {
-		startWidth = 1
-	}
-	startWidth += 2
+	boxWidth := barLen
+	totalWidth := boxWidth*2 + GAP_BETWEEN_BOXES
 
 	return displayDimensions{
 		barLen:      barLen,
 		boxWidth:    boxWidth,
 		totalWidth:  totalWidth,
-		startWidth:  startWidth,
+		startWidth:  2, // Just a minimal left margin
 		maxUsageLen: maxUsageLen,
 	}
 }
 
-func (ui *UI) renderCPUCores(cores []usage.Core, dim displayDimensions) int {
-	startHeight := 2
+func (ui *UI) renderCPUCores(dim displayDimensions) int {
+	startHeight := 1
 	coreStartHeight := startHeight
 	coreStartWidth := dim.startWidth
 	coreCount := 0
 
-	for idx, core := range cores {
+	for idx, core := range ui.cpu.Cores {
 		if coreCount == 1 {
-			coreStartWidth = dim.startWidth + dim.boxWidth + 3
+			coreStartWidth = dim.startWidth + dim.boxWidth + GAP_BETWEEN_BOXES
 		}
 
 		ui.renderCPUBox(
@@ -149,7 +156,7 @@ func (ui *UI) renderCPUCores(cores []usage.Core, dim displayDimensions) int {
 		coreCount++
 		if coreCount >= CORES_PER_ROW {
 			coreStartWidth = dim.startWidth
-			coreStartHeight += 3
+			coreStartHeight += 2
 			coreCount = 0
 		}
 	}
@@ -158,82 +165,96 @@ func (ui *UI) renderCPUCores(cores []usage.Core, dim displayDimensions) int {
 }
 
 func (ui *UI) renderCPUBox(x, y, boxWidth, coreIdx int, usage float32, barLen, maxUsageLen int) {
-	ui.drawBoxBorders(x, y, boxWidth)
-
 	currentX := x
 
-	coreTitle := fmt.Sprintf("%d:", coreIdx)
-	emitStr(ui.screen, currentX, y, ui.styles.text, coreTitle)
-	currentX += len(coreTitle)
+	coreTitle := fmt.Sprintf("CPU%d (%.1f%%)", coreIdx, usage)
+	emitStr(ui.screen, currentX, y-1, ui.styles.text, coreTitle)
 
-	// Draw background first
-	emptyBar := strings.Repeat(" ", barLen)
-	emitStr(ui.screen, currentX, y, ui.styles.barBackground, emptyBar)
-
-	// Draw the bar on top
-	bar := generateBarWithLen(barLen, usage)
-	emitStr(ui.screen, currentX, y, getBarStyle(usage), bar)
-	currentX += barLen
-
-	usageText := fmt.Sprintf("(%.2f%%)", usage)
-	usageText = fmt.Sprintf("%*s", maxUsageLen, usageText)
-	emitStr(ui.screen, currentX, y, ui.styles.text, usageText)
+	ui.renderColoredBar(currentX, y, usage, barLen)
 }
 
-func (ui *UI) renderMemorySection(mem usage.Memory, dim displayDimensions, startHeight int) {
-	memoryTitle := "MEM:"
-	memoryBar := generateBarWithLen(dim.barLen*2+3, mem.Usage)
-	memoryUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Allocated)/float32(1000000), float32(mem.Total)/float32(1000000))
+func (ui *UI) renderMemorySection(dim displayDimensions, startHeight int) int {
+	memoryTitle := fmt.Sprintf("MEM (%.1f/%.1fG)", float32(ui.mem.Allocated)/float32(1000000), float32(ui.mem.Total)/float32(1000000))
+	currentX := dim.startWidth
 
-	memBoxWidth := len(memoryTitle) + (dim.barLen*2 + 3) + len(memoryUsage) + 2
-	memStartWidth := (dim.totalWidth - (memBoxWidth + 2)) / 2
-	if memStartWidth < 1 {
-		memStartWidth = 1
+	// Draw memory title and bar
+	emitStr(ui.screen, currentX, startHeight-1, ui.styles.text, memoryTitle)
+	ui.renderColoredBar(currentX, startHeight, ui.mem.Usage, dim.barLen)
+
+	if ui.mem.Swap != nil {
+		swapX := dim.startWidth + dim.boxWidth + GAP_BETWEEN_BOXES
+		swapTitle := fmt.Sprintf("SWP (%.1f/%.1fG)", float32(ui.mem.Swap.Allocated)/float32(1000000), float32(ui.mem.Swap.Total)/float32(1000000))
+
+		// Draw swap title and bar
+		emitStr(ui.screen, swapX, startHeight-1, ui.styles.text, swapTitle)
+		ui.renderColoredBar(swapX, startHeight, ui.mem.Swap.Usage, dim.barLen)
 	}
-	memStartWidth += dim.startWidth - 1
 
-	ui.drawBoxBorders(memStartWidth, startHeight, memBoxWidth)
+	return startHeight + 1
+}
 
-	currentX := memStartWidth
-	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryTitle)
-	currentX += len(memoryTitle)
+func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
+	if len(ui.processes) == 0 {
+		return
+	}
 
-	// Draw background first
-	emptyBar := strings.Repeat(" ", dim.barLen*2+3)
-	emitStr(ui.screen, currentX, startHeight, ui.styles.barBackground, emptyBar)
+	// Calculate command column width based on available space
+	otherColumnsWidth := 8 + 8 + 8 + 6 + 6                 // PID + STATE + PRIO + CPU% + MEM%
+	commandWidth := dim.totalWidth - otherColumnsWidth - 5 // -5 for spacing between columns
 
-	// Draw the bar on top
-	emitStr(ui.screen, currentX, startHeight, getBarStyle(mem.Usage), memoryBar)
-	currentX += dim.barLen*2 + 3
-	emitStr(ui.screen, currentX, startHeight, ui.styles.text, memoryUsage)
+	// Header
+	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
+		"PID", commandWidth, "COMMAND", "STATE", "PRIO", "CPU%", "MEM%")
+	emitStr(ui.screen, dim.startWidth, startY, ui.styles.text, header)
+	startY++
 
-	if mem.Swap != nil {
-		startHeight += 2
-		swapTitle := "SWP:"
-		swapBar := generateBarWithLen(dim.barLen*2+3, mem.Swap.Usage)
-		swapUsage := fmt.Sprintf("(%.2fGB/%.2fGB)", float32(mem.Swap.Allocated)/float32(1000000), float32(mem.Swap.Total)/float32(1000000))
+	// Calculate visible range
+	visibleCount := maxHeight - 1 // -1 for header
+	if visibleCount < 0 {
+		visibleCount = 0
+	}
+	visibleCount = min(len(ui.processes), visibleCount)
 
-		ui.drawBoxBorders(memStartWidth, startHeight, memBoxWidth)
+	endIdx := ui.scrollOffset + visibleCount
+	if endIdx > len(ui.processes) {
+		endIdx = len(ui.processes)
+	}
 
-		currentX = memStartWidth
-		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapTitle)
-		currentX += len(swapTitle)
+	// Render visible processes
+	for i := ui.scrollOffset; i < endIdx; i++ {
+		proc := ui.processes[i]
 
-		// Draw background first
-		emitStr(ui.screen, currentX, startHeight, ui.styles.barBackground, emptyBar)
+		// Format CPU and MEM values
+		cpuStr := fmt.Sprintf("%5.1f%%", proc.CpuUsage)
+		memStr := fmt.Sprintf("%5.1f%%", proc.MemUsage)
 
-		// Draw the bar on top
-		emitStr(ui.screen, currentX, startHeight, getBarStyle(mem.Swap.Usage), swapBar)
-		currentX += dim.barLen*2 + 3
-		emitStr(ui.screen, currentX, startHeight, ui.styles.text, swapUsage)
+		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
+			proc.ID,
+			commandWidth, truncateString(proc.Command, commandWidth),
+			proc.State,
+			proc.Priority,
+			cpuStr,
+			memStr,
+		)
+
+		style := ui.styles.text
+		if i == ui.selectedProcess {
+			style = ui.styles.selectedText
+		}
+
+		emitStr(ui.screen, dim.startWidth, startY+(i-ui.scrollOffset), style, processLine)
 	}
 }
 
-func (ui *UI) drawBoxBorders(x, y, width int) {
-	emitStr(ui.screen, x-1, y-1, ui.styles.border, "+"+strings.Repeat("-", width)+"+")
-	emitStr(ui.screen, x-1, y+1, ui.styles.border, "+"+strings.Repeat("-", width)+"+")
-	emitStr(ui.screen, x-1, y, ui.styles.border, "|")
-	emitStr(ui.screen, x+width, y, ui.styles.border, "|")
+// Helper function to truncate strings that are too long
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		// If string is shorter than maxLen, right-pad with spaces
+		return fmt.Sprintf("%-*s", maxLen, s)
+	}
+
+	// If longer than maxLen, truncate and add ellipsis
+	return fmt.Sprintf("%-*s", maxLen, s[:maxLen-3]+"...")
 }
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
@@ -257,20 +278,106 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 		switch ev := ev.(type) {
 		case *tcell.EventResize:
 			ui.screen.Sync()
+			ui.draw()
 		case *tcell.EventKey:
-			if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC {
+			switch ev.Key() {
+			case tcell.KeyEscape, tcell.KeyCtrlC:
 				cancelCtx()
 				ui.screen.Fini()
 				os.Exit(0)
+			case tcell.KeyUp:
+				ui.moveSelection(-1)
+				ui.draw()
+			case tcell.KeyDown:
+				ui.moveSelection(1)
+				ui.draw()
 			}
 		}
 	}
 }
 
-func generateBarWithLen(length int, usage float32) string {
-	filled := int((usage / 100) * float32(length))
-	if filled > length {
-		filled = length
+func (ui *UI) moveSelection(delta int) {
+	if len(ui.processes) == 0 {
+		return
 	}
-	return strings.Repeat(OVERALL_STATS_BAR_CHARACTER, filled) + strings.Repeat(OVERALL_STATS_BAR_SPACE, length-filled)
+
+	// Calculate visible area
+	_, height := ui.screen.Size()
+	// CPU section height: number of CPU core pairs * 2 (each pair takes 2 rows)
+	cpuHeight := ((len(ui.cpu.Cores) + 1) / 2) * 2
+	// Total header height: CPU section + 1 for memory + 1 for gap + 1 for process header
+	headerHeight := cpuHeight + 3
+	visibleHeight := height - headerHeight
+	if visibleHeight < 0 {
+		visibleHeight = 0
+	}
+
+	// Calculate new selection
+	newSelection := ui.selectedProcess + delta
+
+	// Bounds checking for selection
+	if newSelection < 0 {
+		newSelection = 0
+	} else if newSelection >= len(ui.processes) {
+		newSelection = len(ui.processes) - 1
+	}
+
+	// Update selection
+	ui.selectedProcess = newSelection
+
+	// Calculate scroll boundaries
+	maxScroll := max(0, len(ui.processes)-visibleHeight)
+
+	// Start scrolling when 3 processes remain from bottom
+	const scrollBuffer = 3
+
+	// If moving down and selection is getting close to bottom of visible area
+	if delta > 0 && ui.selectedProcess >= ui.scrollOffset+visibleHeight-scrollBuffer {
+		ui.scrollOffset = min(ui.selectedProcess-visibleHeight+scrollBuffer, maxScroll)
+	}
+
+	// If moving up and selection is at the top of visible area
+	if delta < 0 && ui.selectedProcess <= ui.scrollOffset {
+		ui.scrollOffset = ui.selectedProcess
+	}
+
+	// Ensure scroll offset stays within bounds
+	if ui.scrollOffset < 0 {
+		ui.scrollOffset = 0
+	}
+	if ui.scrollOffset > maxScroll {
+		ui.scrollOffset = maxScroll
+	}
+}
+
+func (ui *UI) renderColoredBar(x, y int, usage float32, barLen int) {
+	filled := min(int((usage/100)*float32(barLen)), barLen)
+
+	lowPos := int((LOW_USAGE_THRESHOLD / 100) * float32(barLen))
+	highPos := int((HIGH_USAGE_THRESHOLD / 100) * float32(barLen))
+
+	emptyBar := strings.Repeat(" ", barLen)
+	emitStr(ui.screen, x, y, ui.styles.barBackground, emptyBar)
+
+	greenLen := min(filled, lowPos)
+	if greenLen > 0 {
+		greenBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, greenLen)
+		emitStr(ui.screen, x, y, getBarStyle(LOW_USAGE_THRESHOLD-1), greenBar)
+	}
+
+	if filled > lowPos {
+		yellowLen := min(filled-lowPos, highPos-lowPos)
+		if yellowLen > 0 {
+			yellowBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, yellowLen)
+			emitStr(ui.screen, x+lowPos, y, getBarStyle((LOW_USAGE_THRESHOLD+HIGH_USAGE_THRESHOLD)/2), yellowBar)
+		}
+	}
+
+	if filled > highPos {
+		redLen := filled - highPos
+		if redLen > 0 {
+			redBar := strings.Repeat(OVERALL_STATS_BAR_CHARACTER, redLen)
+			emitStr(ui.screen, x+highPos, y, getBarStyle(HIGH_USAGE_THRESHOLD+1), redBar)
+		}
+	}
 }

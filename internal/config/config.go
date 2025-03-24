@@ -15,8 +15,15 @@ func Init() error {
 		return err
 	}
 
+	numCores, err := sysconf.Sysconf(sysconf.SC_NPROCESSORS_ONLN)
+
+	if err != nil {
+		return err
+	}
+
 	system := System{
 		ClkTck: clktck,
+		CoresCount:  numCores,
 	}
 
 	config = &Config{

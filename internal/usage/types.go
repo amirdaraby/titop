@@ -29,7 +29,7 @@ type Memory struct {
 }
 
 type Process struct {
-	ID       int
+	ID       string
 	Command  string
 	State    string
 	Priority string
@@ -37,9 +37,6 @@ type Process struct {
 	MemUsage float32
 }
 
-type processCpuStat struct {
-	uTime, sTime, startTime int
-}
 
 const (
 	USER_OVERALL_STAT = iota
@@ -114,3 +111,11 @@ const (
 	VM_RSS_MEM  = 20
 	VM_SWAP_MEM = 25
 )
+
+type processCpuStat struct {
+	uTime, sTime, startTime, systemUptime int64
+}
+
+func (p *processCpuStat) processTime() int64 {
+	return p.uTime + p.sTime
+}
