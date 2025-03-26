@@ -37,7 +37,7 @@ func Processes(res chan []Process) {
 	numCores := config.Get().CoresCount
 
 	for _, p := range processesContent {
-		stats := strings.Split(string(p), " ")
+		stats := strings.Split(string(p["stat"]), " ")
 
 		pid := stats[ID_PROCESS]
 		if _, exists := seenPIDs[pid]; exists {
@@ -65,6 +65,18 @@ func Processes(res chan []Process) {
 			panic(err)
 		}
 
+		mstats := strings.Split(string(p["statm"]), " ")
+
+		rss, err := strconv.Atoi(mstats[M_RSS_PROCESS])
+
+		if err != nil {
+			panic(err)
+		}
+
+		memAlloc := int64(rss) * config.Get().PageSize
+
+		memUsage := float32(memAlloc) / float32(config.Get().TotalMem) * 100
+
 		currentStat := processCpuStat{
 			uTime:        int64(utime),
 			sTime:        int64(stime),
@@ -82,6 +94,7 @@ func Processes(res chan []Process) {
 				State:    state,
 				Priority: priority,
 				CpuUsage: 0,
+				MemUsage: memUsage,
 			})
 			continue
 		}
@@ -109,6 +122,7 @@ func Processes(res chan []Process) {
 			State:    state,
 			Priority: priority,
 			CpuUsage: cpuUsage,
+			MemUsage: memUsage,
 		})
 	}
 

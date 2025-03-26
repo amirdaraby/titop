@@ -1,6 +1,8 @@
 package config
 
-import "github.com/tklauser/go-sysconf"
+import (
+	"github.com/tklauser/go-sysconf"
+)
 
 type Config struct {
 	System
@@ -21,9 +23,25 @@ func Init() error {
 		return err
 	}
 
+	pageSize, err := sysconf.Sysconf(sysconf.SC_PAGESIZE)
+
+	if err != nil {
+		return err
+	}
+
+	memPages, err := sysconf.Sysconf(sysconf.SC_PHYS_PAGES)
+
+	if err != nil {
+		return err
+	}
+
+	totalMem := memPages * pageSize
+
 	system := System{
-		ClkTck: clktck,
-		CoresCount:  numCores,
+		ClkTck:     clktck,
+		CoresCount: numCores,
+		PageSize:   pageSize,
+		TotalMem:   totalMem,
 	}
 
 	config = &Config{
@@ -34,7 +52,7 @@ func Init() error {
 }
 
 func Get() *Config {
-	
+
 	if config == nil {
 		panic("config is not initalized")
 	}
