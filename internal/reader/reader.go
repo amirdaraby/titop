@@ -27,11 +27,8 @@ func ReadUptime() (uptimeContent []byte, err error) {
 	return
 }
 
-func ReadProcesses() (processesContent [][]byte) {
-	processesContentChan := make(chan []byte, 1)
-	
-	go func () {
-		filepath.Walk("/proc", func(path string, info os.FileInfo, err error) error {
+func ReadProcesses() (processesContent []map[string][]byte) {
+ 		filepath.Walk("/proc", func(path string, info os.FileInfo, err error) error {
 
 			if err != nil || !info.IsDir() {
 				return nil
@@ -45,22 +42,27 @@ func ReadProcesses() (processesContent [][]byte) {
 				return nil
 			}
 	
-			pContent, err := os.ReadFile(fmt.Sprintf("/proc/%s/stat", name))
+			statContent, err := os.ReadFile(fmt.Sprintf("/proc/%s/stat", name))
 	
 			if err != nil {
 				return nil
 			}
 	
-			processesContentChan <- pContent
+			memStatContent, err := os.ReadFile(fmt.Sprintf("/proc/%s/statm", name))
+	
+			if err != nil {
+				return nil
+			}
+	
+			processMap := make(map[string][]byte)
+
+			processMap["stat"] = statContent
+			processMap["statm"] = memStatContent
+
+			processesContent = append(processesContent, processMap)
 	
 			return nil
 		})
-		close(processesContentChan)
-	}()
 
-	for pContent := range processesContentChan {
-		processesContent = append(processesContent, pContent)
-	}
-
-	return
+	return processesContent
 }
