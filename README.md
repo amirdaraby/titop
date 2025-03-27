@@ -2,6 +2,10 @@
 
 A modern, eye-friendly terminal system monitor.
 
+## Screenshot 📸
+
+![Titop Screenshot](./assets/screenshot.png)
+
 ## Getting Started 🚀
 
 ### What You Need
