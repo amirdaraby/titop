@@ -1,9 +1,7 @@
 package reader
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 )
 
@@ -28,41 +26,43 @@ func ReadUptime() (uptimeContent []byte, err error) {
 }
 
 func ReadProcesses() (processesContent []map[string][]byte) {
- 		filepath.Walk("/proc", func(path string, info os.FileInfo, err error) error {
+	dirEntries, err := os.ReadDir("/proc")
 
-			if err != nil || !info.IsDir() {
-				return nil
-			}
-	
-			name := info.Name()
-	
-			_, err = strconv.Atoi(name)
-	
-			if err != nil {
-				return nil
-			}
-	
-			statContent, err := os.ReadFile(fmt.Sprintf("/proc/%s/stat", name))
-	
-			if err != nil {
-				return nil
-			}
-	
-			memStatContent, err := os.ReadFile(fmt.Sprintf("/proc/%s/statm", name))
-	
-			if err != nil {
-				return nil
-			}
-	
-			processMap := make(map[string][]byte)
+	if err != nil {
+		panic(err)
+	}
 
-			processMap["stat"] = statContent
-			processMap["statm"] = memStatContent
+	for _, d := range dirEntries {
+		if !d.IsDir() {
+			break
+		}
 
-			processesContent = append(processesContent, processMap)
-	
-			return nil
-		})
+		dirName := d.Name()
+		_, err = strconv.Atoi(dirName)
+
+		if err != nil {
+			break
+		}
+
+		statContent, err := os.ReadFile("/proc/" + dirName + "/stat")
+
+		if err != nil {
+			continue
+		}
+
+		memStatContent, err := os.ReadFile("/proc/" + dirName + "/statm")
+
+		if err != nil {
+			continue
+		}
+
+		processMap := make(map[string][]byte)
+
+		processMap["stat"] = statContent
+		processMap["statm"] = memStatContent
+
+		processesContent = append(processesContent, processMap)
+	}
 
 	return processesContent
 }
