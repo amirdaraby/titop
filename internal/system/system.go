@@ -1,10 +1,10 @@
 package system
 
-import "syscall"
+import "golang.org/x/sys/unix"
 
 func GetUptime() (int64, error) {
-	var info syscall.Sysinfo_t
-	err := syscall.Sysinfo(&info)
+	var info unix.Sysinfo_t
+	err := unix.Sysinfo(&info)
 
 	if err != nil {
 		return 0, err
