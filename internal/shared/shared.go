@@ -1,14 +1,18 @@
-package config
+package shared
 
 import (
 	"github.com/tklauser/go-sysconf"
+	"golang.org/x/sys/unix"
 )
 
 type Config struct {
-	System
+	ClkTck int64
+	CoresCount int64
+	PageSize int64
+	TotalMem int64 // in RSS
 }
 
-var config *Config
+var cfg *Config
 
 func Init() error {
 	clktck, err := sysconf.Sysconf(sysconf.SC_CLK_TCK)
@@ -18,7 +22,6 @@ func Init() error {
 	}
 
 	numCores, err := sysconf.Sysconf(sysconf.SC_NPROCESSORS_ONLN)
-
 	if err != nil {
 		return err
 	}
@@ -37,25 +40,31 @@ func Init() error {
 
 	totalMem := memPages * pageSize
 
-	system := System{
+	cfg = &Config{
 		ClkTck:     clktck,
 		CoresCount: numCores,
 		PageSize:   pageSize,
 		TotalMem:   totalMem,
 	}
 
-	config = &Config{
-		System: system,
-	}
-
 	return nil
 }
 
-func Get() *Config {
+func GetUptime() (int64, error) {
+	var info unix.Sysinfo_t
+	err := unix.Sysinfo(&info)
 
-	if config == nil {
-		panic("config is not initalized")
+	if err != nil {
+		return 0, err
 	}
 
-	return config
+	return info.Uptime, nil
+}
+
+func GetConfig() *Config {
+	if cfg == nil {
+		panic("Initialize Shared before using this function")
+	}
+
+	return cfg
 }

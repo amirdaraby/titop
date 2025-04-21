@@ -4,15 +4,18 @@ import (
 	"context"
 	"time"
 
-	"github.com/amirdaraby/titop/internal/usage"
+	"github.com/amirdaraby/titop/internal/collect"
+	"github.com/amirdaraby/titop/internal/collect/cpu"
+	"github.com/amirdaraby/titop/internal/collect/mem"
+	"github.com/amirdaraby/titop/internal/collect/proc"
 )
 
 func Run(parentCtx context.Context) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 
-	cpuRes := make(chan usage.CPU, 1)
-	memRes := make(chan usage.Memory, 1)
-	processesRes := make(chan []usage.Process, 1)
+	cpuRes := make(chan cpu.CPU, 1)
+	memRes := make(chan mem.Memory, 1)
+	processesRes := make(chan []proc.Process, 1)
 
 	ui, err := Init(cancel)
 
@@ -29,7 +32,7 @@ func Run(parentCtx context.Context) error {
 			case <-ctx.Done():
 				break loop
 			default:
-				usage.Calc(cpuRes, memRes, processesRes)
+				collect.Collect(cpuRes, memRes, processesRes)
 				time.Sleep(time.Second * 2)
 			}
 		}

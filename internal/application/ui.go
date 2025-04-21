@@ -6,7 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/amirdaraby/titop/internal/usage"
+	"github.com/amirdaraby/titop/internal/collect/cpu"
+	"github.com/amirdaraby/titop/internal/collect/mem"
+	"github.com/amirdaraby/titop/internal/collect/proc"
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
@@ -28,9 +30,9 @@ const (
 type UI struct {
 	screen          tcell.Screen
 	styles          uiStyles
-	cpu             usage.CPU
-	mem             usage.Memory
-	processes       []usage.Process
+	cpu             cpu.CPU
+	mem             mem.Memory
+	processes       []proc.Process
 	selectedProcess int // Current selected process index
 	scrollOffset    int // How many processes to skip from top
 }
@@ -83,7 +85,7 @@ func (ui *UI) setTerminalStyle() {
 	ui.screen.SetStyle(tcell.StyleDefault)
 }
 
-func (ui *UI) update(cpu usage.CPU, mem usage.Memory, processes []usage.Process) {
+func (ui *UI) update(cpu cpu.CPU, mem mem.Memory, processes []proc.Process) {
 	ui.cpu = cpu
 	ui.mem = mem
 	ui.processes = processes

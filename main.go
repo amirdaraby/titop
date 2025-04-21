@@ -4,12 +4,12 @@ import (
 	"context"
 
 	titop "github.com/amirdaraby/titop/internal/application"
-	"github.com/amirdaraby/titop/internal/config"
+	"github.com/amirdaraby/titop/internal/shared"
 )
 
 func main() {
 
-	if err := config.Init(); err != nil {
+	if err := shared.Init(); err != nil {
 		panic(err)
 	}
 
