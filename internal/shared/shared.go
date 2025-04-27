@@ -1,6 +1,8 @@
 package shared
 
 import (
+	"time"
+
 	"github.com/tklauser/go-sysconf"
 	"golang.org/x/sys/unix"
 )
@@ -13,6 +15,8 @@ type Config struct {
 }
 
 var cfg *Config
+var refreshRate int = 2000 // ms
+var lastRefresh time.Time
 
 func Init() error {
 	clktck, err := sysconf.Sysconf(sysconf.SC_CLK_TCK)
@@ -67,4 +71,28 @@ func GetConfig() *Config {
 	}
 
 	return cfg
+}
+
+func IncreaseRefreshRate(increase int) {
+	if refreshRate + increase <= 10000 {
+		refreshRate += increase
+	}
+}
+
+func DecreaseRefreshRate(decrease int) {
+	if refreshRate - decrease >= 100 {
+		refreshRate -= decrease
+	}
+}
+
+func GetRefreshRate() int {
+	return refreshRate
+}
+
+func Refreshing() {
+	lastRefresh = time.Now()
+}
+
+func GetLastRefresh() time.Time {
+	return lastRefresh
 }

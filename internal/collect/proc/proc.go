@@ -4,12 +4,13 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/amirdaraby/titop/internal/reader"
 	"github.com/amirdaraby/titop/internal/shared"
 )
 
-var processLastStates map[string]processCpuStat = make(map[string]processCpuStat)
+var processLastStates map[string]processStat = make(map[string]processStat)
 
 type Process struct {
 	ID       string
@@ -18,10 +19,11 @@ type Process struct {
 	Priority string
 	CpuUsage float32
 	MemUsage float32
+	IO       int64 // bytes
 }
 
-type processCpuStat struct {
-	uTime, sTime, startTime, systemUptime int64
+type processStat struct {
+	uTime, sTime, startTime, systemUptime, readBytes, writeBytes int64
 }
 
 const (
@@ -89,7 +91,7 @@ const (
 	M_SWAP_DIRTY_PROCESS
 )
 
-func (p *processCpuStat) processTime() int64 {
+func (p *processStat) processTime() int64 {
 	return p.uTime + p.sTime
 }
 
@@ -147,11 +149,47 @@ func SendUsage(res chan []Process) {
 
 		memUsage := float32(memAlloc) / float32(shared.GetConfig().TotalMem) * 100
 
-		currentStat := processCpuStat{
+		ioContent, ioExists := p["io"]
+
+		var ioBytes int64 = -1
+		var readBytes int64 = 0
+		var writeBytes int64 = 0
+
+		if ioExists {
+			ioStatLines := strings.Split(string(ioContent), "\n")
+			ioStatMap := make(map[string]int64)
+
+			for _, line := range ioStatLines {
+				seperatedLine := strings.Split(line, ":")
+
+				if len(seperatedLine) != 2 {
+					continue
+				}
+
+				key := seperatedLine[0]
+				valStr := strings.Fields(seperatedLine[1])[0]
+
+				value, err := strconv.ParseInt(valStr, 10, 64)
+
+				if err != nil {
+					panic(err)
+				}
+
+				ioStatMap[key] = value
+			}
+
+			readBytes = ioStatMap["read_bytes"]
+			writeBytes = ioStatMap["write_bytes"]
+			ioBytes = 0
+		}
+
+		currentStat := processStat{
 			uTime:        int64(utime),
 			sTime:        int64(stime),
 			startTime:    int64(startTime),
 			systemUptime: systemUptime,
+			readBytes:    readBytes,
+			writeBytes:   writeBytes,
 		}
 
 		lastStat, exists := processLastStates[pid]
@@ -165,6 +203,7 @@ func SendUsage(res chan []Process) {
 				Priority: priority,
 				CpuUsage: 0,
 				MemUsage: memUsage,
+				IO:       ioBytes,
 			})
 			continue
 		}
@@ -184,6 +223,17 @@ func SendUsage(res chan []Process) {
 			cpuUsage = 100.0
 		}
 
+		if ioBytes != -1 {
+			readD := readBytes - lastStat.readBytes
+			writeD := writeBytes - lastStat.writeBytes
+
+			elapsedTime := time.Now().Sub(shared.GetLastRefresh()).Seconds()
+
+			if elapsedTime >= 1 {
+				ioBytes = (readD + writeD) / int64(elapsedTime)
+			}
+		}
+
 		processLastStates[pid] = currentStat
 
 		processes = append(processes, Process{
@@ -193,6 +243,7 @@ func SendUsage(res chan []Process) {
 			Priority: priority,
 			CpuUsage: cpuUsage,
 			MemUsage: memUsage,
+			IO:       ioBytes,
 		})
 	}
 
