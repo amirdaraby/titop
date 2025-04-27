@@ -58,6 +58,12 @@ func ReadProcesses() (processesContent []map[string][]byte) {
 
 		processMap := make(map[string][]byte)
 
+		diskStatContent, err := os.ReadFile("/proc/"+dirName+"/io")
+
+		if err == nil {
+			processMap["io"] = diskStatContent
+		}
+
 		processMap["stat"] = statContent
 		processMap["statm"] = memStatContent
 
@@ -65,4 +71,10 @@ func ReadProcesses() (processesContent []map[string][]byte) {
 	}
 
 	return processesContent
+}
+
+func ReadDiskStat() (diskStatContent []byte, err error) {
+	diskStatContent, err = os.ReadFile("/proc/diskstats")
+	
+	return
 }

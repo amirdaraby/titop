@@ -8,6 +8,7 @@ import (
 	"github.com/amirdaraby/titop/internal/collect/cpu"
 	"github.com/amirdaraby/titop/internal/collect/mem"
 	"github.com/amirdaraby/titop/internal/collect/proc"
+	"github.com/amirdaraby/titop/internal/shared"
 )
 
 func Run(parentCtx context.Context) error {
@@ -32,8 +33,9 @@ func Run(parentCtx context.Context) error {
 			case <-ctx.Done():
 				break loop
 			default:
+				shared.Refreshing()
 				collect.Collect(cpuRes, memRes, processesRes)
-				time.Sleep(time.Second * 2)
+				time.Sleep(time.Millisecond * time.Duration(shared.GetRefreshRate()))
 			}
 		}
 	}()

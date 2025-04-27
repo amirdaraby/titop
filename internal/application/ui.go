@@ -200,13 +200,13 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 		return
 	}
 
-	// Calculate command column width based on available space
-	otherColumnsWidth := 8 + 8 + 8 + 6 + 6                 // PID + STATE + PRIO + CPU% + MEM%
-	commandWidth := dim.totalWidth - otherColumnsWidth - 5 // -5 for spacing between columns
+	// Calculate column widths based on available space
+	otherColumnsWidth := 8 + 8 + 8 + 6 + 6 + 8 // PID + STATE + PRIO + CPU% + MEM% + IO
+	commandWidth := dim.totalWidth - otherColumnsWidth - 6 // -6 for spacing between columns
 
 	// Header
-	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
-		"PID", commandWidth, "COMMAND", "STATE", "PRIO", "CPU%", "MEM%")
+	header := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s %8s",
+		"PID", commandWidth, "COMMAND", "STATE", "PRIO", "CPU%", "MEM%", "IO")
 	emitStr(ui.screen, dim.startWidth, startY, ui.styles.text, header)
 	startY++
 
@@ -226,17 +226,26 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 	for i := ui.scrollOffset; i < endIdx; i++ {
 		proc := ui.processes[i]
 
-		// Format CPU and MEM values
+		// Format CPU, MEM, and IO values
 		cpuStr := fmt.Sprintf("%5.1f%%", proc.CpuUsage)
 		memStr := fmt.Sprintf("%5.1f%%", proc.MemUsage)
+		
+		// Safely format IO value
+		var ioStr string
+		if proc.IO >= 0 {
+			ioStr = fmt.Sprintf("%7.1f", float32(proc.IO)/float32(1024*1024))
+		} else {
+			ioStr = "   N/A"
+		}
 
-		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s",
+		processLine := fmt.Sprintf("%-8s %-*s %-8s %-8s %6s %6s %8s",
 			proc.ID,
 			commandWidth, truncateString(proc.Command, commandWidth),
 			proc.State,
 			proc.Priority,
 			cpuStr,
 			memStr,
+			ioStr,
 		)
 
 		style := ui.styles.text
