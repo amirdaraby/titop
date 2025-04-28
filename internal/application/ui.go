@@ -9,6 +9,7 @@ import (
 	"github.com/amirdaraby/titop/internal/collect/cpu"
 	"github.com/amirdaraby/titop/internal/collect/mem"
 	"github.com/amirdaraby/titop/internal/collect/proc"
+	"github.com/amirdaraby/titop/internal/shared"
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
@@ -33,8 +34,8 @@ type UI struct {
 	cpu             cpu.CPU
 	mem             mem.Memory
 	processes       []proc.Process
-	selectedProcess int // Current selected process index
-	scrollOffset    int // How many processes to skip from top
+	selectedProcess int
+	scrollOffset    int
 }
 
 type uiStyles struct {
@@ -98,6 +99,9 @@ func (ui *UI) draw() {
 
 	dimensions := ui.calculateDimensions(width)
 
+	// Add refresh rate display at the top right
+	ui.renderRefreshRate(dimensions)
+
 	lastPos := ui.renderCPUCores(dimensions)
 	lastPos = ui.renderMemorySection(dimensions, lastPos)
 
@@ -107,6 +111,27 @@ func (ui *UI) draw() {
 	ui.renderProcessList(dimensions, lastPos, height-lastPos)
 
 	ui.screen.Show()
+}
+
+func (ui *UI) renderRefreshRate(dim displayDimensions) {
+	refreshRate := shared.GetRefreshRate()
+
+	// Position at top right
+	width, _ := ui.screen.Size()
+	x := width - len("< 1000ms >") - 3 // -3 for padding from right edge
+
+	// Nice blue style for clickable arrows
+	arrowStyle := tcell.StyleDefault.Foreground(tcell.NewRGBColor(0, 191, 255)) // Deep Sky Blue
+	// Default style for number
+	defaultStyle := ui.styles.text
+
+	// Draw each part separately
+	decreaseX := x
+	increaseX := x + len(fmt.Sprintf(" %dms ", refreshRate)) + 1
+	emitStr(ui.screen, 15, 0, arrowStyle, fmt.Sprintf("%d,%d", decreaseX, increaseX))
+	emitStr(ui.screen, decreaseX, 0, arrowStyle, "<")
+	emitStr(ui.screen, x+1, 0, defaultStyle, fmt.Sprintf(" %dms ", refreshRate))
+	emitStr(ui.screen, increaseX, 0, arrowStyle, ">")
 }
 
 type displayDimensions struct {
@@ -201,7 +226,7 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 	}
 
 	// Calculate column widths based on available space
-	otherColumnsWidth := 8 + 8 + 8 + 6 + 6 + 8 // PID + STATE + PRIO + CPU% + MEM% + IO
+	otherColumnsWidth := 8 + 8 + 8 + 6 + 6 + 8             // PID + STATE + PRIO + CPU% + MEM% + IO
 	commandWidth := dim.totalWidth - otherColumnsWidth - 6 // -6 for spacing between columns
 
 	// Header
@@ -229,7 +254,7 @@ func (ui *UI) renderProcessList(dim displayDimensions, startY, maxHeight int) {
 		// Format CPU, MEM, and IO values
 		cpuStr := fmt.Sprintf("%5.1f%%", proc.CpuUsage)
 		memStr := fmt.Sprintf("%5.1f%%", proc.MemUsage)
-		
+
 		// Safely format IO value
 		var ioStr string
 		if proc.IO >= 0 {
@@ -301,6 +326,14 @@ func (ui *UI) pollAndListenToEvents(cancelCtx context.CancelFunc) {
 				ui.draw()
 			case tcell.KeyDown:
 				ui.moveSelection(1)
+				ui.draw()
+			}
+			switch ev.Rune() {
+			case ',', '<':
+				shared.DecreaseRefreshRate(100)
+				ui.draw()
+			case '.', '>':
+				shared.IncreaseRefreshRate(100)
 				ui.draw()
 			}
 		}
